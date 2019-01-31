@@ -16,5 +16,5 @@ func main() {
 		fmt.Printf("connection failed:%v\n", err)
 		os.Exit(1)
 	}
-	client.LoopReader(c)
+	client.InputReader(c)
 }

@@ -27,6 +27,9 @@ func (err redisError) Error() string { return "Redis Error: " + string(err) }
 
 var doesNotExist = redisError("Key does not exist ")
 
+var defaultTag = ">"
+var subPatternTag = "[sub]>"
+
 // reads a bulk reply (i.e $5\r\nhello)
 func readBulk(reader *bufio.Reader, head string) ([]byte, error) {
 	var err error
@@ -180,16 +183,16 @@ func (client *Client) OpenConnection() (c net.Conn, err error) {
 	return
 }
 
-//EncodeCommand encode a cmd to resp and send to c
-func (client *Client) EncodeCommand(c net.Conn, cmd string, args ...string) (interface{}, error) {
+//processCommand encode a cmd to resp and send to c
+func (client *Client) processCommand(c net.Conn, cmd string, args ...string) (interface{}, error) {
 	var b []byte
 	b = commandBytes(cmd, args...)
 	data, err := client.rawSend(c, b)
 	return data, err
 }
 
-//LoopReader read from stdin and output response
-func (client *Client) LoopReader(c net.Conn) {
+//InputReader read from stdin and output response
+func (client *Client) InputReader(c net.Conn) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("> ")
 	for scanner.Scan() {
@@ -197,8 +200,11 @@ func (client *Client) LoopReader(c net.Conn) {
 		if args[0] == "exit" || args[0] == "quit" || args[0] == "q" {
 			os.Exit(0)
 		}
-		response, err := client.EncodeCommand(c, args[0], args[1:]...)
-		parseResponse(response, err)
+		response, err := client.processCommand(c, args[0], args[1:]...)
+		parseResponse(response, err, defaultTag)
+		if args[0] == "subscribe" {
+			subscribePattern(c, scanner)
+		}
 	}
 
 	if scanner.Err() != nil {
@@ -207,10 +213,10 @@ func (client *Client) LoopReader(c net.Conn) {
 	}
 }
 
-func parseResponse(response interface{}, err error) {
+func parseResponse(response interface{}, err error, tag string) {
 	if err != nil {
 		fmt.Printf("%v\n", err)
-		fmt.Print("> ")
+		fmt.Printf("%s ", tag)
 	} else {
 		switch response.(type) {
 		case []uint8:
@@ -227,6 +233,49 @@ func parseResponse(response interface{}, err error) {
 			fmt.Printf("%T", response)
 		}
 		fmt.Print("\n")
-		fmt.Print("> ")
+		fmt.Printf("%s ", tag)
+	}
+}
+
+func subscribePattern(c net.Conn, s *bufio.Scanner) {
+	done := make(chan int)
+	command := make(chan []string)
+	reader := bufio.NewReader(c)
+	go commandScanner(c, s, done, command)
+	go commandWriter(c, command)
+	go commandReader(reader, subPatternTag)
+	<-done
+}
+
+func commandScanner(c net.Conn, s *bufio.Scanner, done chan int, command chan []string) {
+	fmt.Print("[sub]>")
+	for s.Scan() {
+		args := strings.Split(s.Text(), " ")
+		if args[0] == "exit" || args[0] == "quit" || args[0] == "q" {
+			os.Exit(1)
+		}
+		command <- args
+	}
+
+	if s.Err() != nil {
+		fmt.Printf("%v", s.Err())
+		os.Exit(2)
+	}
+}
+
+func commandWriter(c net.Conn, command chan []string) {
+	for arg := range command {
+		cmd := commandBytes(arg[0], arg[1:]...)
+		_, err := c.Write(cmd)
+		if err != nil {
+			fmt.Printf("[sub]write command error:%v", err)
+		}
+	}
+}
+
+func commandReader(r *bufio.Reader, tag string) {
+	for {
+		data, err := readResponse(r)
+		parseResponse(data, err, tag)
 	}
 }
