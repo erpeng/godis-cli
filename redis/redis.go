@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var defaultAddr = "127.0.0.1:6379"
@@ -197,13 +198,14 @@ func (client *Client) InputReader(c net.Conn) {
 	fmt.Print("> ")
 	for scanner.Scan() {
 		args := strings.Split(scanner.Text(), " ")
-		if args[0] == "exit" || args[0] == "quit" || args[0] == "q" {
+		if args[0] == "exit" {
 			os.Exit(0)
 		}
 		response, err := client.processCommand(c, args[0], args[1:]...)
 		parseResponse(response, err, defaultTag)
 		if args[0] == "subscribe" {
 			subscribePattern(c, scanner)
+			fmt.Printf("\r%s", defaultTag)
 		}
 	}
 
@@ -216,7 +218,7 @@ func (client *Client) InputReader(c net.Conn) {
 func parseResponse(response interface{}, err error, tag string) {
 	if err != nil {
 		fmt.Printf("%v\n", err)
-		fmt.Printf("%s ", tag)
+		fmt.Printf("\r%s ", tag)
 	} else {
 		switch response.(type) {
 		case []uint8:
@@ -233,7 +235,7 @@ func parseResponse(response interface{}, err error, tag string) {
 			fmt.Printf("%T", response)
 		}
 		fmt.Print("\n")
-		fmt.Printf("%s ", tag)
+		fmt.Printf("\r%s ", tag)
 	}
 }
 
@@ -241,22 +243,30 @@ func subscribePattern(c net.Conn, s *bufio.Scanner) {
 	done := make(chan int)
 	command := make(chan []string)
 	reader := bufio.NewReader(c)
-	go commandScanner(c, s, done, command)
+	go commandScanner(c, s, reader, done, command)
 	go commandWriter(c, command)
 	go commandReader(reader, subPatternTag)
 	<-done
 }
 
-func commandScanner(c net.Conn, s *bufio.Scanner, done chan int, command chan []string) {
-	fmt.Print("[sub]>")
+func commandScanner(c net.Conn, s *bufio.Scanner, r *bufio.Reader, done chan int, command chan []string) {
+	fmt.Print("\r[sub]>")
 	for s.Scan() {
 		args := strings.Split(s.Text(), " ")
-		if args[0] == "exit" || args[0] == "quit" || args[0] == "q" {
-			os.Exit(1)
+		if args[0] == "exit" {
+			fmt.Println("exit sub pattern....")
+			command <- []string{"exit"}
+			time.Sleep(time.Second)
+			command <- []string{"unsubscribe"}
+			readResponse(r)
+			command <- []string{"punsubscribe"}
+			readResponse(r)
+			break
 		}
 		command <- args
 	}
-
+	close(command)
+	close(done)
 	if s.Err() != nil {
 		fmt.Printf("%v", s.Err())
 		os.Exit(2)
@@ -276,6 +286,9 @@ func commandWriter(c net.Conn, command chan []string) {
 func commandReader(r *bufio.Reader, tag string) {
 	for {
 		data, err := readResponse(r)
+		if err != nil && strings.HasPrefix(err.Error(), "Redis Error: unknown command `exit`") {
+			break
+		}
 		parseResponse(data, err, tag)
 	}
 }
