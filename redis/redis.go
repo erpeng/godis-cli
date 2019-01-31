@@ -198,32 +198,35 @@ func (client *Client) LoopReader(c net.Conn) {
 			os.Exit(0)
 		}
 		response, err := client.EncodeCommand(c, args[0], args[1:]...)
-		if err != nil {
-			fmt.Printf("%v\n", err)
-			fmt.Print("> ")
-		} else {
-			switch response.(type) {
-			case []uint8:
-				fmt.Printf("%s", string(response.([]uint8)))
-			case string:
-				fmt.Printf("%s", response.(string))
-			case int64:
-				fmt.Printf("%d", response.(int64))
-			case [][]uint8:
-				for _, b := range response.([][]uint8) {
-					fmt.Printf("%s ", string(b))
-				}
-			default:
-				fmt.Printf("%T", response)
-			}
-			fmt.Print("\n")
-			fmt.Print("> ")
-		}
-
+		parseResponse(response, err)
 	}
 
 	if scanner.Err() != nil {
 		fmt.Printf("%v", scanner.Err())
 		os.Exit(2)
+	}
+}
+
+func parseResponse(response interface{}, err error) {
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		fmt.Print("> ")
+	} else {
+		switch response.(type) {
+		case []uint8:
+			fmt.Printf("%s", string(response.([]uint8)))
+		case string:
+			fmt.Printf("%s", response.(string))
+		case int64:
+			fmt.Printf("%d", response.(int64))
+		case [][]uint8:
+			for _, b := range response.([][]uint8) {
+				fmt.Printf("%s ", string(b))
+			}
+		default:
+			fmt.Printf("%T", response)
+		}
+		fmt.Print("\n")
+		fmt.Print("> ")
 	}
 }
